@@ -1,0 +1,168 @@
+-- Проект был выполнен в рамках прохождения курса ДПО от ИТМО
+-- Состоит из 16 заданий на составление запросов к БД (PostgreSQL)
+
+
+/*1.1 Посмотреть, что из себя представляет таблица track*/
+
+SELECT *
+FROM track
+LIMIT 10;
+
+/*1.2 Из таблицы track выбрать все записи, у которых исполнитель (composer) - Frank Zappa*/
+
+SELECT *
+FROM track
+WHERE composer = 'Frank Zappa';
+
+/*1.3 Из таблицы track выбрать все записи, у которых исполнитель - AC/DC ИЛИ среди исполнителей есть Steven Tyler (частичное совпадение)*/
+
+SELECT *
+FROM track
+WHERE composer = 'AC/DC' OR composer LIKE '%Steven Tyler%';
+
+/*1.4 Из таблицы track выбрать все записи, у которых исполнитель - Chico Science И длина трека в миллисекундах (milliseconds) 
+строго меньше 100000*/
+
+SELECT *
+FROM track
+WHERE composer = 'Chico Science' AND milliseconds < 100000;
+
+/*1.5 Из таблицы track выбрать все записи, у которых идентификатор альбома (album_id) не равен 1, 3, 5, 7, 14, 23, 28, 36 
+ИЛИ идентификатор альбома равен 101*/
+
+SELECT *
+FROM track
+WHERE album_id NOT IN ('1', '3', '5', '7', '14', '23', '28', '36') OR album_id = '101';
+
+/*1.6 Из таблицы track выбрать поля name, composer, bytes, оставить только те записи, у которых media_type_id равен 2 и отсортировать 
+оставшиеся строки по album_id по убыванию и размеру в байтах (bytes) по возрастанию*/
+
+SELECT name, composer, bytes
+FROM track
+WHERE media_type_id = '2'
+ORDER BY album_id DESC, bytes;
+
+
+
+/*2.1 Выяснить, сколько каждый артист выпустил альбомов. В качестве результата получить название артиста и количество альбомов*/
+
+SELECT artist.name,
+	COUNT(album_id) AS albums_count
+FROM artist
+	LEFT JOIN album ON artist.artist_id = album.artist_id
+GROUP BY artist.name;
+
+/*2.2 Определить среднее время треков в альбоме, у которых стоимость (unitprice) больше 1. 
+	Результат отсортировать по убыванию среднего времени треков в альбоме. 
+	Дополнительно, убрать альбомы, у которых среднее время треков меньше 2 минуты.*/
+
+SELECT album.title, 
+	ROUND(AVG(milliseconds)) AS avg_time
+FROM track
+	INNER JOIN album ON track.album_id = album.album_id
+WHERE unit_price > 1
+GROUP BY album.album_id
+HAVING AVG(milliseconds) > 2*60000
+ORDER BY avg_time DESC;
+
+/*2.3 Определить, сколько треков, сколько артистов находятся в жанре Pop и Rock. Вывести название жанра и требуемые показатели. */
+
+SELECT genre.name,
+	COUNT(track_id) AS count_track,
+	COUNT(DISTINCT album.artist_id) AS count_artist
+FROM genre 
+	INNER JOIN track ON genre.genre_id = track.genre_id
+	INNER JOIN album ON track.album_id = album.album_id
+GROUP BY genre.name
+HAVING genre.name = 'Pop' OR genre.name = 'Rock';
+
+
+
+/*3.1 Найти среднюю стоимость альбомов каждого исполнителя вместе с максимальной и минимальной стоимостью, не изменяя 
+при этом размерность таблицы.*/
+
+SELECT author_name,
+	title,
+	album_cost,
+	AVG(album_cost) OVER (PARTITION BY author_name) AS avg_album_cost,
+	MAX(album_cost) OVER (PARTITION BY author_name) AS max_album_cost,
+	MIN(album_cost) OVER (PARTITION BY author_name) AS min_album_cost
+FROM (
+		SELECT artist.name AS author_name,
+			album.title AS title,
+			SUM(unit_price) AS album_cost
+		FROM artist
+		INNER JOIN album ON artist.artist_id = album.artist_id
+		INNER JOIN track ON album.album_id = track.album_id
+		GROUP BY album.album_id, artist.name
+	 ) AS query_1
+
+/*3.2 Найти пользователей, у которых среднее время между покупками менее 100 дней. 
+Вывести самую популярную страну, в которой эти пользователи совершали эти покупки*/
+
+SELECT invoice.customer_id, invoice.billing_country, COUNT(*) AS cnt
+FROM invoice
+INNER JOIN (
+        SELECT customer_id, AVG(diff) AS avg_diff
+        FROM (
+            SELECT 
+                customer_id,
+                EXTRACT(DAY FROM (LEAD(invoice_date) OVER (PARTITION BY customer_id ORDER BY invoice_date) - invoice_date)) AS diff
+            FROM invoice
+        ) query_1
+        WHERE diff IS NOT NULL
+        GROUP BY customer_id
+        HAVING AVG(diff) < 100
+) query_2 ON invoice.customer_id = query_2.customer_id
+GROUP BY invoice.billing_country, invoice.customer_id
+ORDER BY cnt DESC
+LIMIT 1;
+
+/*3.3 Для каждой страны вывести кумулятивную сумму продаже билетов в ее штате. Сортировку можно выбрать произвольно.*/
+
+SELECT invoice_date, 
+	billing_country,
+	billing_city,
+	SUM(total) OVER (PARTITION BY billing_state ORDER BY invoice_date) AS cum_sum
+FROM invoice;
+
+/*3.4 Определить самую популярную дату покупки билетов и вывести в качестве результата город покупки в порядке убывания 
+суммарной стоимости проданных там билетов.*/
+
+SELECT billing_city,
+	SUM(total) AS sum_total
+FROM invoice
+WHERE invoice_date IN (
+		SELECT invoice_date
+		FROM invoice
+		GROUP BY invoice_date
+		ORDER BY COUNT(*) DESC
+		LIMIT 1
+)
+GROUP BY billing_city
+ORDER BY sum_total DESC
+
+
+
+/* 4.1 Создать новую таблицу "new_invoice_{surname}"/, где {surname} - ваша фамилия на латинице с помощью подзапроса 
+на выборку из таблицы "invoice" - выберите из нее все invoice_id, billing_address, billing_state, total для записей 
+из США и Канады, начиная с 2020 года.*/
+
+CREATE TABLE new_invoice_starchenko AS
+	SELECT invoice_id,
+		billing_address,
+		billing_state,
+		total
+	FROM invoice
+	WHERE (billing_country = 'USA' OR billing_country = 'Canada')
+		AND invoice_date >= '2020-01-01 00:00:00';
+
+/*4.2 Вставьте в получившуюся таблицу новую запись с invoice_id="1000", остальные значения - на ваш выбор*/
+
+INSERT INTO new_invoice_starchenko 
+VALUES ('1000', '194A Chain Lake Drive', 'NY', 32.40);
+
+/*4.3 Удалите из таблицы "new_invoice_{surname}" все записи, у которых total > 4.*/
+
+DELETE FROM new_invoice_starchenko
+WHERE total > 4; 
